@@ -1,0 +1,39 @@
+name: Verify installable APK
+on:
+  push:
+    branches: [android-native]
+    paths: ['.github/workflows/verify-apk.yml']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Pivland-Android
+          run-id: 45829672900
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/apk
+      - name: Inspect original APK
+        shell: bash
+        run: |
+          set -eu
+          files=("$RUNNER_TEMP"/apk/*.apk)
+          test "${#files[@]}" -eq 1
+          apk="${files[0]}"
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          unzip -tq "$apk"
+          "$bt/aapt" dump badging "$apk" | head -100 > "$RUNNER_TEMP/badging" || test -s "$RUNNER_TEMP/badging"
+          grep -E '^(package:|sdkVersion:|targetSdkVersion:|native-code:)' "$RUNNER_TEMP/badging"
+          "$bt/apksigner" verify --verbose --min-sdk-version 24 "$apk"
+          stat --format='Original APK: %n (%s bytes)' "$apk"
+          mkdir -p downloads
+          cp "$apk" downloads/Pivland-0.2.apk
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add downloads/Pivland-0.2.apk
+          git commit -m "Provide verified standalone Android test package"
+          git push origin HEAD:android-native
