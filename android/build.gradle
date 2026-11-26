@@ -10,9 +10,10 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    signingConfigs { debug { enableV1Signing = true } }
     defaultConfig {
         applicationId 'ru.pivland.app'
-        minSdk 24
+        minSdk 21
         targetSdk 34
         versionCode 2
         versionName '0.2'

@@ -1,7 +1,7 @@
 name: Android APK
 on:
   push:
-    branches: [android-native]
+    branches: [android-5]
     paths: ['index.php', 'cabinet.php', 'android/**', '.github/workflows/android.yml']
   workflow_dispatch:
 permissions:
@@ -20,9 +20,12 @@ jobs:
           gradle-version: '8.9'
       - run: php -l index.php && php -l cabinet.php
       - run: gradle -p android assembleDebug lintDebug
+      - run: |
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$bt/apksigner" verify --verbose --min-sdk-version 21 android/build/outputs/apk/debug/*.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: Pivland-Android
+          name: Pivland-Android-5
           path: android/build/outputs/apk/debug/*.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
