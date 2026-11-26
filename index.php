@@ -187,7 +187,7 @@ function get_current_user_data() {
 
 function authenticate_user($login, $password) {
     $login = trim($login);
-    $password = trim($password);
+    $password = (string)$password;
 
     if (empty($login)) {
         return ['success' => false, 'message' => 'Введите логин'];
@@ -203,9 +203,10 @@ function authenticate_user($login, $password) {
         mysqli_stmt_close($stmt);
 
         if ($user) {
-            if ($user['role'] === 'admin' && !password_verify($password, $user['password_hash'])) {
-                return ['success' => false, 'message' => 'Неверный пароль администратора'];
+            if (!password_verify($password, $user['password_hash'])) {
+                return ['success' => false, 'message' => 'Неверный логин или пароль'];
             }
+            session_regenerate_id(true);
             $_SESSION['user'] = [
                 'id'    => (int)$user['id'],
                 'login' => $user['login'],
@@ -216,17 +217,7 @@ function authenticate_user($login, $password) {
         }
     }
 
-    if ($login !== 'admin') {
-        $_SESSION['user'] = [
-            'id'    => 0,
-            'login' => $login,
-            'role'  => 'user',
-            'name'  => $login
-        ];
-        return ['success' => true, 'role' => 'user', 'user' => $_SESSION['user']];
-    }
-
-    return ['success' => false, 'message' => 'Пользователь не найден'];
+    return ['success' => false, 'message' => 'Неверный логин или пароль'];
 }
 
 function logout_user() {
