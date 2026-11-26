@@ -4,6 +4,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import javax.net.ssl.SSLHandshakeException
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -22,6 +25,8 @@ class MainActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var page: LinearLayout
     private val api = "https://app.pivland.ru/new4/index.php?api="
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    private val gold = Color.rgb(251, 191, 36)
     private var generation = 0
     private var screen = ""
     private var products = JSONArray()
@@ -32,7 +37,15 @@ class MainActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val nav = LinearLayout(this)
+        root.setBackgroundColor(Color.BLACK)
+        root.addView(TextView(this).apply {
+            text = "ПИВЛЯНДИЯ"
+            textSize = 24f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(gold)
+            setPadding(dp(16), dp(20), dp(16), dp(10))
+        })
+        val nav = LinearLayout(this).apply { setPadding(dp(12), 0, dp(12), dp(8)) }
         root.addView(nav)
         for ((name, action) in listOf("Каталог" to { catalog() }, "Кабинет" to { account() })) {
             nav.addView(button(name, action), LinearLayout.LayoutParams(0, -2, 1f))
@@ -57,10 +70,22 @@ class MainActivity : Activity() {
     private fun button(label: String, action: () -> Unit) = Button(this).apply {
         text = label
         isAllCaps = false
+        setTextColor(gold)
+        background = GradientDrawable().apply {
+            setColor(0xff111111.toInt())
+            cornerRadius = dp(14).toFloat()
+            setStroke(dp(1), 0xff694514.toInt())
+        }
         setOnClickListener { action() }
     }
     private fun label(value: String, size: Float = 16f) {
-        page.addView(TextView(this).apply { textSize = size; text = value })
+        page.addView(TextView(this).apply {
+            textSize = size
+            text = value
+            setTextColor(if (size >= 19f) gold else 0xfff8fafc.toInt())
+            if (size >= 19f) typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(7), 0, dp(7))
+        })
     }
     private fun start(name: String, title: String) {
         generation++
@@ -103,8 +128,8 @@ class MainActivity : Activity() {
             runOnUiThread {
                 if (generation != id || isDestroyed || isFinishing) return@runOnUiThread
                 result.onSuccess { page.removeView(status); success(it) }.onFailure {
-                    status.text = if (it is IOException && !it.message.isNullOrBlank()) it.message else "Не удалось получить данные"
-                    val retry = Button(this@MainActivity).apply { text = "Повторить" }
+                    status.text = if (it is SSLHandshakeException) "Телефон не смог проверить сертификат сайта" else if (it is IOException && !it.message.isNullOrBlank()) it.message else "Не удалось получить данные"
+                    val retry = button("Повторить") {}
                     retry.setOnClickListener { page.removeView(retry); page.removeView(status); request(route, body, success) }
                     page.addView(retry)
                 }
@@ -120,7 +145,8 @@ class MainActivity : Activity() {
         if (products.length() == 0) label("Каталог пока пуст")
         for (i in 0 until products.length()) {
             val item = products.getJSONObject(i)
-            page.addView(button(item.optString("name")) { detail(item) })
+            val card = button(item.optString("name")) { detail(item) }
+            page.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
     }
     private fun detail(item: JSONObject) {
