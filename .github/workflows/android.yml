@@ -2,7 +2,7 @@ name: Android APK
 on:
   push:
     branches: [android-native]
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths: ['index.php', 'cabinet.php', 'android/**', '.github/workflows/android.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,9 +18,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - run: php -l index.php && php -l cabinet.php
       - run: gradle -p android assembleDebug lintDebug
       - uses: actions/upload-artifact@v4
         with:
           name: Pivland-Android
           path: android/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pivland-server
+          path: |
+            index.php
+            cabinet.php

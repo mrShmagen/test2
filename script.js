@@ -1,7 +1,4 @@
 /**
- * =======================================================
- * Сеть магазинов разливного пива «Пивляндия» (Симферополь)
- * =======================================================
  *
  * СОДЕРЖАНИЕ
  *   1.  Состояние приложения
@@ -127,17 +124,15 @@ async function checkCurrentUser() {
 }
 
 function updateUserUI() {
+    if (typeof window.pmRenderUserMenu === 'function') {
+        window.pmRenderUserMenu(state.user);
+        return;
+    }
     const authBtn = document.getElementById('auth-btn');
     if (!authBtn) return;
-
     if (state.user) {
-        if (state.user.role === 'admin') {
-            authBtn.innerHTML = `<i class="fa-solid fa-shield-halved"></i> Админка`;
-            authBtn.onclick = () => window.location.href = 'admin.php';
-        } else {
-            authBtn.innerHTML = `<i class="fa-solid fa-user-check"></i> ${state.user.name || 'Кабинет'}`;
-            authBtn.onclick = showUserMenu;
-        }
+        authBtn.innerHTML = `<i class="fa-solid fa-user-check"></i> ${state.user.name || state.user.login || 'Кабинет'} <i class="fa-solid fa-chevron-down"></i>`;
+        authBtn.onclick = showUserMenu;
     } else {
         authBtn.innerHTML = `<i class="fa-solid fa-right-to-bracket"></i> Войти`;
         authBtn.onclick = () => openModal('auth-modal');
@@ -420,9 +415,7 @@ function initProductCardClick() {
     if (!grid) return;
 
     grid.addEventListener('click', (e) => {
-        // Только мобильные/планшеты — на десктопе всё видно и без модалки
-        if (!window.matchMedia('(max-width: 768px)').matches) return;
-
+        // Двухэтапное открытие карточки одинаково работает на ПК и мобильных устройствах.
         // Клики по кнопкам/ссылкам внутри карточки обрабатываются как раньше
         if (e.target.closest('button, a')) return;
 
@@ -750,9 +743,16 @@ function addToCart(itemId, type = 'product') {
 
     if (!itemData) return;
 
+    const isFavoriteDrink = type === 'product' && Number(window.favoriteDrink?.productId || 0) === Number(itemData.id);
+    const favoriteDiscount = isFavoriteDrink ? Number(window.favoriteDrink.discountPercent || 1) : 0;
+    const originalPrice = Number(itemData.price || 0);
+    const effectivePrice = isFavoriteDrink ? Math.round(originalPrice * (1 - favoriteDiscount / 100) * 100) / 100 : originalPrice;
+
     const existingIndex = state.cart.findIndex(i => i.id == itemId && i.type === type);
     if (existingIndex > -1) {
         state.cart[existingIndex].qty += 1;
+        state.cart[existingIndex].price = effectivePrice;
+        state.cart[existingIndex].discountPercent = favoriteDiscount;
     } else {
         const isFish = type === 'product'
             && (itemData.category_name || '').toLowerCase().includes('рыб');
@@ -760,7 +760,8 @@ function addToCart(itemId, type = 'product') {
             id: itemData.id,
             type: type,
             name: itemData.name,
-            price: Number(itemData.price || 0),
+            price: effectivePrice,
+            discountPercent: favoriteDiscount,
             image: itemData.image,
             fallback: itemData.no_photo || (isFish ? 'images/no-photo-fish.webp' : 'images/no-photo.webp'),
             qty: 1,
@@ -831,6 +832,7 @@ function renderCartDrawer() {
                 <div class="cart-item-info">
                     <div class="cart-item-title">${item.name}</div>
                     ${pricesEnabled ? `<div class="cart-item-price">${item.price} ₽ × ${item.qty} = <strong>${itemSum} ₽</strong></div>` : ''}
+                    ${item.discountPercent ? `<small style="color:var(--gold-light);">Любимый напиток · скидка ${item.discountPercent}%</small>` : ''}
                 </div>
                 <div class="cart-qty-controls">
                     <button class="cart-qty-btn" onclick="changeCartQty(${idx}, -1)">-</button>

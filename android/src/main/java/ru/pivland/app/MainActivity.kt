@@ -2,6 +2,11 @@ package ru.pivland.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.graphics.Bitmap
+import android.graphics.Color
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
 import android.os.Bundle
 import android.text.InputType
 import android.widget.*
@@ -71,7 +76,7 @@ class MainActivity : Activity() {
         page.addView(status)
         worker.execute {
             val result = runCatching {
-                val url = URL(api + route)
+                val url = if (route == "loyalty") URL(URL(api), "cabinet.php?api=loyalty") else URL(api + route)
                 val conn = url.openConnection() as HttpURLConnection
                 try {
                     conn.instanceFollowRedirects = false
@@ -141,7 +146,8 @@ class MainActivity : Activity() {
         request("current_user") {
             if (it.optBoolean("logged_in")) {
                 label(it.getJSONObject("user").optString("login"))
-                page.addView(button("Выйти") { request("logout", JSONObject()) { account() } })
+                page.addView(button("Выйти") { request("logout", JSONObject()) { products = JSONArray(); account() } })
+                request("loyalty") { showLoyalty(it) }
             } else {
                 val login = EditText(this).apply { hint = "Логин"; isSingleLine = true }
                 val password = EditText(this).apply {
@@ -155,6 +161,84 @@ class MainActivity : Activity() {
                     request("auth", payload) { account() }
                 })
             }
+        }
+    }
+    private fun showLoyalty(data: JSONObject) {
+        label("Дисконтная карта", 22f)
+        data.optJSONObject("card")?.let { card ->
+            label("Ваша скидка " + card.optString("discount_percent") + "%")
+            addQr(card.optString("card_code"), "QR-код карты")
+        } ?: label("Карта временно недоступна")
+
+        val categories = data.optJSONArray("categories") ?: JSONArray()
+        if (categories.length() > 0) label("Прогресс покупок", 22f)
+        for (i in 0 until categories.length()) {
+            val category = categories.getJSONObject(i)
+            val bought = category.optDouble("purchased", 0.0)
+            val levels = category.getJSONArray("levels")
+            label(category.optString("name"), 19f)
+            for (j in 0 until levels.length()) {
+                val level = levels.getJSONObject(j)
+                val target = level.optDouble("threshold", 0.0)
+                val unit = level.optString("unit_label")
+                label("${level.optString("level_name")} · ${number(bought)} / ${number(target)} $unit")
+                page.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    progress = if (target > 0) (100 * bought / target).toInt().coerceIn(0, 100) else 0
+                })
+                if (!level.isNull("gift_product_name")) {
+                    label("Подарок · ${level.optString("gift_product_name")} × ${number(level.optDouble("gift_quantity", 1.0))}")
+                }
+            }
+        }
+
+        label("Мои промокоды", 22f)
+        val promos = data.optJSONArray("promos") ?: JSONArray()
+        if (promos.length() == 0) label("Пока нет промокодов")
+        for (i in 0 until promos.length()) {
+            val promo = promos.getJSONObject(i)
+            label(promo.optString("title"), 19f)
+            if (!promo.isNull("description")) label(promo.optString("description"))
+            val type = if (promo.optString("reward_type") == "gift") "Подарок" else "Скидка"
+            label(if (promo.isNull("reward_value")) type else "$type · ${promo.optString("reward_value")}")
+            label("С ${date(promo, "starts_at", "момента выдачи")} · до ${date(promo, "expires_at", "отмены")}")
+            label(promo.optString("display_status"))
+            addQr(promo.optString("code"), "QR-код промокода")
+        }
+    }
+
+    private fun number(value: Double) = java.text.DecimalFormat("0.###").format(value)
+
+    private fun date(item: JSONObject, key: String, fallback: String): String {
+        if (item.isNull(key)) return fallback
+        val parts = item.optString(key).take(10).split("-")
+        return if (parts.size == 3) parts.reversed().joinToString(".") else fallback
+    }
+
+    private fun addQr(value: String, title: String) {
+        if (value.isBlank()) return
+        val matrix = runCatching { QRCodeWriter().encode(value, BarcodeFormat.QR_CODE, 384, 384,
+            mapOf(EncodeHintType.CHARACTER_SET to "UTF-8")) }.getOrNull()
+        if (matrix == null) { label("Не удалось показать QR-код"); return }
+        val size = matrix.width
+        val pixels = IntArray(size * size) { pos ->
+            if (matrix[pos % size, pos / size]) Color.BLACK else Color.WHITE
+        }
+        val bitmap = Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+        fun image() = ImageView(this).apply {
+            setImageBitmap(bitmap)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = title
+        }
+        val preview = image()
+        val side = (128 * resources.displayMetrics.density).toInt()
+        page.addView(preview, side, side)
+        preview.setOnClickListener {
+            val large = image()
+            val dialog = AlertDialog.Builder(this).setTitle(title).setView(large)
+                .setPositiveButton("Закрыть", null).show()
+            dialog.window?.setLayout(-1, -1)
+            large.setOnClickListener { dialog.dismiss() }
         }
     }
     @Deprecated("Legacy back navigation")

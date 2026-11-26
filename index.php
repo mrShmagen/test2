@@ -1,7 +1,6 @@
 <?php
 /**
  * =======================================================
- * Сеть магазинов разливного пива «Пивляндия» (Симферополь)
  * Файл: index.php — Конфигурация + функции + витрина
  * =======================================================
  *
@@ -207,6 +206,7 @@ function authenticate_user($login, $password) {
                 return ['success' => false, 'message' => 'Неверный логин или пароль'];
             }
             session_regenerate_id(true);
+            $_SESSION['verified_login'] = true;
             $_SESSION['user'] = [
                 'id'    => (int)$user['id'],
                 'login' => $user['login'],
@@ -485,6 +485,8 @@ function handle_api_requests() {
             $stmt = mysqli_prepare($db, "INSERT INTO users (login, password_hash, role) VALUES (?, ?, 'user')");
             mysqli_stmt_bind_param($stmt, "ss", $login, $hash);
             if (mysqli_stmt_execute($stmt)) {
+                session_regenerate_id(true);
+                $_SESSION['verified_login'] = true;
                 $_SESSION['user'] = [
                     'id'    => (int)mysqli_insert_id($db),
                     'login' => $login,
@@ -575,6 +577,17 @@ $prices_enabled = $is_admin_view || get_setting('prices_enabled', '1') === '1';
 $hide_pwa_install = get_setting('hide_pwa_install', '0') === '1';
 $favorites_ids    = get_user_favorites();
 
+$favorite_drink_discount = ['product_id' => 0, 'discount_percent' => 0];
+$fdTableCheck = mysqli_query(get_db_connection(), "SHOW TABLES LIKE 'favorite_drinks'");
+$fdUserId = (int)($_SESSION['user']['id'] ?? 0);
+if ($fdUserId > 0 && $fdTableCheck && mysqli_num_rows($fdTableCheck) > 0) {
+    $fdq = mysqli_prepare(get_db_connection(), "SELECT product_id,discount_percent FROM favorite_drinks WHERE user_id=? AND product_id IS NOT NULL");
+    mysqli_stmt_bind_param($fdq, 'i', $fdUserId);
+    mysqli_stmt_execute($fdq);
+    $fdrow = mysqli_fetch_assoc(mysqli_stmt_get_result($fdq));
+    if ($fdrow) $favorite_drink_discount = ['product_id'=>(int)$fdrow['product_id'], 'discount_percent'=>(float)$fdrow['discount_percent']];
+}
+
 // Атрибуты, по которым можно фильтровать витрину
 $type_attr = null;
 $proc_attr = null;
@@ -641,26 +654,51 @@ $stock_summary = get_products_stock_summary(array_column($products, 'id'));
     function pmEsc(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
     function pmLogout(){ fetch('index.php?api=logout', {method:'POST', credentials:'same-origin'}).then(function(){ location.reload(); }).catch(function(){ location.reload(); }); }
     window.pmLogout = pmLogout;
+
+    window.pmRenderUserMenu = function(user){
+        var oldWrap = document.querySelector('.header-actions .user-menu-wrap');
+        var btn = document.getElementById('auth-btn');
+        if (!user) {
+            if (oldWrap) {
+                var loginBtn = document.createElement('button');
+                loginBtn.id = 'auth-btn';
+                loginBtn.className = 'btn btn-outline btn-sm';
+                loginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> <span class="auth-btn-text">Войти</span>';
+                loginBtn.addEventListener('click', function(){ if (typeof openModal === 'function') openModal('auth-modal'); });
+                oldWrap.parentNode.replaceChild(loginBtn, oldWrap);
+            }
+            return;
+        }
+        if (oldWrap) {
+            var existingName = oldWrap.querySelector('.user-menu-name');
+            if (existingName) existingName.textContent = user.login || user.name || 'Профиль';
+            return;
+        }
+        btn = document.getElementById('auth-btn');
+        if (!btn) return;
+        var wrap = document.createElement('div');
+        wrap.className = 'user-menu-wrap';
+        wrap.innerHTML = '<button type="button" class="btn btn-outline btn-sm user-menu-toggle"><i class="fa-solid fa-user"></i> <span class="user-menu-name">' + pmEsc(user.login || user.name || 'Профиль') + '</span> <i class="fa-solid fa-chevron-down" style="font-size:.7rem;opacity:.7;"></i></button>'
+            + '<div class="user-menu-dropdown">'
+            + '<a href="cabinet.php" class="user-menu-item"><i class="fa-solid fa-id-card"></i> Личный кабинет</a>'
+            + '<a href="javascript:void(0)" class="user-menu-item" onclick="pmLogout();return false;"><i class="fa-solid fa-arrow-right-from-bracket"></i> Выйти</a>'
+            + '</div>';
+        btn.parentNode.replaceChild(wrap, btn);
+        var toggle = wrap.querySelector('.user-menu-toggle');
+        toggle.addEventListener('click', function(e){ e.stopPropagation(); wrap.classList.toggle('open'); });
+        if (!window.pmMenuOutsideClickBound) {
+            document.addEventListener('click', function(e){
+                document.querySelectorAll('.user-menu-wrap.open').forEach(function(el){ if(!el.contains(e.target)) el.classList.remove('open'); });
+            });
+            window.pmMenuOutsideClickBound = true;
+        }
+    };
+
     document.addEventListener('DOMContentLoaded', function(){
         fetch('index.php?api=current_user', {credentials:'same-origin'})
         .then(function(r){ return r.json(); })
-        .then(function(d){
-            if (!d || !d.success || !d.logged_in) return;
-            var btn = document.getElementById('auth-btn');
-            if (!btn) return;
-            var u = d.user || {};
-            var wrap = document.createElement('div');
-            wrap.className = 'user-menu-wrap';
-            wrap.innerHTML = '<button type="button" class="btn btn-outline btn-sm user-menu-toggle"><i class="fa-solid fa-user"></i> <span class="user-menu-name">' + pmEsc(u.login || u.name || 'Профиль') + '</span> <i class="fa-solid fa-chevron-down" style="font-size:.7rem;opacity:.7;"></i></button>'
-                + '<div class="user-menu-dropdown">'
-                + '<a href="cabinet.php" class="user-menu-item"><i class="fa-solid fa-id-card"></i> Личный кабинет</a>'
-                + '<a href="javascript:void(0)" class="user-menu-item" onclick="pmLogout();return false;"><i class="fa-solid fa-arrow-right-from-bracket"></i> Выйти</a>'
-                + '</div>';
-            btn.parentNode.replaceChild(wrap, btn);
-            var toggle = wrap.querySelector('.user-menu-toggle');
-            toggle.addEventListener('click', function(e){ e.stopPropagation(); wrap.classList.toggle('open'); });
-            document.addEventListener('click', function(){ wrap.classList.remove('open'); });
-        }).catch(function(){});
+        .then(function(d){ if(d && d.success && d.logged_in) window.pmRenderUserMenu(d.user || {}); })
+        .catch(function(){});
     });
 })();
 </script>
@@ -672,7 +710,9 @@ $stock_summary = get_products_stock_summary(array_column($products, 'id'));
 .user-menu-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; color: var(--text-primary, #fff); text-decoration: none; font-size: .9rem; }
 .user-menu-item:hover { background: rgba(245,158,11,.12); color: var(--gold-light, #fbbf24); }
 .user-menu-item i { width: 16px; text-align: center; }
-@media (max-width: 600px) { .user-menu-name { display: none; } }
+@media (max-width: 600px) {
+    .user-menu-name { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+}
 </style>
 
     <!-- =========================================================
@@ -1021,11 +1061,14 @@ $stock_summary = get_products_stock_summary(array_column($products, 'id'));
                                 <?php
 								$is_weight = strpos($prod['volume'] ?? '', 'г') !== false;
 								$price_lbl = $is_weight ? 'Цена за ' . htmlspecialchars($prod['volume']) : 'Цена за 1 л';
+                                    $is_favorite_drink = (int)$favorite_drink_discount['product_id'] === (int)$prod['id'];
+                                    $favorite_price = $is_favorite_drink ? round((float)$prod['price'] * (1 - (float)$favorite_drink_discount['discount_percent'] / 100), 2) : (float)$prod['price'];
 								?>
                                 <?php if ($prices_enabled): ?>
 								<div class="product-price-box">
 									<span class="product-price-label"><?= $price_lbl ?></span>
-									<span class="product-price"><?= number_format($prod['price'], 0, '', ' ') ?> ₽</span>
+                                    <?php if ($is_favorite_drink): ?><span style="font-size:.78rem;color:var(--gold-light);">Любимый напиток · −<?= number_format($favorite_drink_discount['discount_percent'],2,',',' ') ?>%</span><span style="font-size:.82rem;text-decoration:line-through;color:var(--text-muted);"><?= number_format($prod['price'], 0, '', ' ') ?> ₽</span><?php endif; ?>
+									<span class="product-price"><?= number_format($favorite_price, 0, '', ' ') ?> ₽</span>
 								</div>
                                 <?php endif; ?>
                                 <?php if ($cart_enabled): ?>
@@ -1366,6 +1409,7 @@ $stock_summary = get_products_stock_summary(array_column($products, 'id'));
         window.initialCategories = <?= json_encode($categories, JSON_UNESCAPED_UNICODE) ?>;
         window.stockSummary      = <?= json_encode($client_stock_summary ?: new stdClass(), JSON_UNESCAPED_UNICODE) ?>;
         window.initialFavorites  = <?= json_encode(get_user_favorites()) ?>;
+        window.favoriteDrink = <?= json_encode(['productId'=>(int)$favorite_drink_discount['product_id'], 'discountPercent'=>(float)$favorite_drink_discount['discount_percent']]) ?>;
         window.cartEnabled       = <?= $cart_enabled ? 'true' : 'false' ?>;
         window.pricesEnabled     = <?= $prices_enabled ? 'true' : 'false' ?>;
         window.combosEnabled     = <?= $combos_enabled ? 'true' : 'false' ?>;

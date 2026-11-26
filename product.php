@@ -1,6 +1,5 @@
 <?php
 /**
- * Страница товара «Пивляндия»
  * Открывается по адресу: product.php?id=<ID товара>
  */
 if (session_status() === PHP_SESSION_NONE) {
@@ -165,6 +164,7 @@ function ensure_favorites_table($db) {
 }
 $is_favorite = false;
 $favorites_ids = [];
+$favorite_drink_discount = ['product_id'=>0,'discount_percent'=>0];
 if (isset($_SESSION['user'])) {
     $fav_uid = (int)($_SESSION['user']['id'] ?? 0);
     if ($fav_uid > 0) {
@@ -177,6 +177,14 @@ if (isset($_SESSION['user'])) {
             while ($frow = mysqli_fetch_assoc($fres)) $favorites_ids[] = (int)$frow['product_id'];
             $is_favorite = in_array((int)$product['id'], $favorites_ids, true);
         }
+    }
+    $fdTableCheck = mysqli_query($db, "SHOW TABLES LIKE 'favorite_drinks'");
+    if ($fav_uid > 0 && $fdTableCheck && mysqli_num_rows($fdTableCheck) > 0) {
+        $fdq = mysqli_prepare($db, "SELECT product_id,discount_percent FROM favorite_drinks WHERE user_id=? AND product_id IS NOT NULL");
+        mysqli_stmt_bind_param($fdq, 'i', $fav_uid);
+        mysqli_stmt_execute($fdq);
+        $fdrow = mysqli_fetch_assoc(mysqli_stmt_get_result($fdq));
+        if ($fdrow) $favorite_drink_discount = ['product_id'=>(int)$fdrow['product_id'],'discount_percent'=>(float)$fdrow['discount_percent']];
     }
 }
 ?>
@@ -347,9 +355,12 @@ if (isset($_SESSION['user'])) {
 							$pp_label = strpos($product['volume'] ?? '', 'г') !== false
 								? 'Цена за ' . htmlspecialchars($product['volume'])
 								: 'Цена за 1 л';
+                                $is_favorite_drink = (int)$favorite_drink_discount['product_id'] === (int)$product['id'];
+                                $favorite_price = $is_favorite_drink ? round((float)$product['price'] * (1 - (float)$favorite_drink_discount['discount_percent']/100), 2) : (float)$product['price'];
 							?>
 							<div class="product-page-price-label"><?= $pp_label ?></div>
-							<div class="product-page-price"><?= number_format($product['price'], 0, '', ' ') ?> ₽</div>
+                                <?php if ($is_favorite_drink): ?><div style="color:var(--gold-light);font-size:.85rem;">Любимый напиток · скидка <?= number_format($favorite_drink_discount['discount_percent'],2,',',' ') ?>%</div><div style="text-decoration:line-through;color:var(--text-muted);"><?= number_format($product['price'],0,'',' ') ?> ₽</div><?php endif; ?>
+							<div class="product-page-price"><?= number_format($favorite_price, 0, '', ' ') ?> ₽</div>
                         </div>
                         <?php endif; ?>
                         <?php if ($cart_enabled): ?>
@@ -450,6 +461,7 @@ if (isset($_SESSION['user'])) {
         window.cartEnabled       = <?= $cart_enabled ? 'true' : 'false' ?>;
         window.pricesEnabled     = <?= $prices_enabled ? 'true' : 'false' ?>;
         window.stockSummary      = <?= json_encode($stock_summary, JSON_UNESCAPED_UNICODE) ?>;
+        window.favoriteDrink = <?= json_encode(['productId'=>(int)$favorite_drink_discount['product_id'],'discountPercent'=>(float)$favorite_drink_discount['discount_percent']]) ?>;
         window.combosEnabled     = false;
     </script>
     <script src="script.js?v=<?= @filemtime('script.js') ?: time() ?>"></script>

@@ -1,7 +1,6 @@
 <?php
 /**
  * =======================================================
- * Сеть магазинов разливного пива «Пивляндия» (Симферополь)
  * Файл: admin.php — Конфигурация + функции + панель управления
  * =======================================================
  */
@@ -324,6 +323,12 @@ if (!is_admin()) {
 }
 
 $db = get_db_connection();
+$giftColumn = mysqli_query($db, "SHOW COLUMNS FROM loyalty_levels LIKE 'reward_description'");
+if ($giftColumn && mysqli_num_rows($giftColumn) === 0) mysqli_query($db, "ALTER TABLE loyalty_levels ADD COLUMN reward_description VARCHAR(500) NULL DEFAULT NULL");
+$giftProductColumn = mysqli_query($db, "SHOW COLUMNS FROM loyalty_levels LIKE 'gift_product_id'");
+if ($giftProductColumn && mysqli_num_rows($giftProductColumn) === 0) mysqli_query($db, "ALTER TABLE loyalty_levels ADD COLUMN gift_product_id INT NULL DEFAULT NULL");
+$giftQuantityColumn = mysqli_query($db, "SHOW COLUMNS FROM loyalty_levels LIKE 'gift_quantity'");
+if ($giftQuantityColumn && mysqli_num_rows($giftQuantityColumn) === 0) mysqli_query($db, "ALTER TABLE loyalty_levels ADD COLUMN gift_quantity DECIMAL(10,3) NOT NULL DEFAULT 1.000");
 
 // ==================== AJAX: СОХРАНЕНИЕ СОРТИРОВКИ ====================
 if (isset($_GET['action']) && $_GET['action'] === 'update_order') {
@@ -374,6 +379,34 @@ if (isset($_GET['action']) && $_GET['action'] === 'toggle_visibility') {
     echo json_encode(['success'=>true, 'is_visible'=>$row ? (int)$row['is_visible'] : 0]);
     exit;
 }
+
+// ==================== ЛОЯЛЬНОСТЬ ====================
+if(isset($_POST['award_favorite_drink'])) {
+    $uid=(int)($_POST['favorite_reward_user_id']??0);
+    $bonus=max(0,min(50,(float)($_POST['favorite_reward_percent']??0)));
+    $reason=trim($_POST['favorite_reward_reason']??'Награда администратора');
+    $adminId=(int)($_SESSION['user']['id']??0);
+    if($uid>0 && $bonus>0) {
+        $st=mysqli_prepare($db,"INSERT IGNORE INTO favorite_drinks(user_id,discount_percent) VALUES(?,1.00)");
+        mysqli_stmt_bind_param($st,'i',$uid);
+        if(mysqli_stmt_execute($st)) {
+            $log=mysqli_prepare($db,"INSERT INTO favorite_drink_rewards(user_id,percent_added,reason,created_by) VALUES(?,?,?,?)");
+            mysqli_stmt_bind_param($log,'idsi',$uid,$bonus,$reason,$adminId);
+            mysqli_stmt_execute($log);
+            $up=mysqli_prepare($db,"UPDATE favorite_drinks SET discount_percent=LEAST(100,discount_percent+?) WHERE user_id=?");
+            mysqli_stmt_bind_param($up,'di',$bonus,$uid);
+            mysqli_stmt_execute($up);
+            // При создании записи начальные 1% учитываются отдельно; награда добавляется сверху.
+            $message='Награда любимому напитку начислена.';
+        }
+    }
+}
+if(isset($_POST['save_loyalty_discount'])){$uid=(int)($_POST['loyalty_user_id']??0);$percent=max(0,min(100,(float)($_POST['discount_percent']??1)));if($uid>0){$code='PV'.strtoupper(bin2hex(random_bytes(8)));$st=mysqli_prepare($db,"INSERT INTO loyalty_cards(user_id,card_code,discount_percent) VALUES(?,?,?) ON DUPLICATE KEY UPDATE discount_percent=VALUES(discount_percent)");mysqli_stmt_bind_param($st,'isd',$uid,$code,$percent);mysqli_stmt_execute($st);$message='Процент скидки сохранён.';}}
+if(isset($_POST['save_loyalty_level'])){$cid=(int)($_POST['level_category_id']??0);$name=trim($_POST['level_name']??'');$threshold=max(0.001,(float)($_POST['level_threshold']??0));$unit=trim($_POST['level_unit']??'л');$sort=(int)($_POST['level_sort']??0);$giftProduct=(int)($_POST['level_gift_product_id']??0);$giftQty=max(0.001,(float)($_POST['level_gift_quantity']??1));if($cid>0&&$name!==''){$st=mysqli_prepare($db,"INSERT INTO loyalty_levels(category_id,level_name,threshold,unit_label,sort_order,gift_product_id,gift_quantity) VALUES(?,?,?,?,?,?,?)");mysqli_stmt_bind_param($st,'isdsiid',$cid,$name,$threshold,$unit,$sort,$giftProduct,$giftQty);mysqli_stmt_execute($st);$message='Уровень добавлен.';}}
+if(isset($_POST['update_loyalty_level'])){$id=(int)($_POST['level_id']??0);$cid=(int)($_POST['level_category_id']??0);$name=trim($_POST['level_name']??'');$threshold=max(0.001,(float)($_POST['level_threshold']??0));$unit=trim($_POST['level_unit']??'л');$sort=(int)($_POST['level_sort']??0);$giftProduct=(int)($_POST['level_gift_product_id']??0);$giftQty=max(0.001,(float)($_POST['level_gift_quantity']??1));if($id>0&&$cid>0&&$name!==''){$st=mysqli_prepare($db,"UPDATE loyalty_levels SET category_id=?,level_name=?,threshold=?,unit_label=?,sort_order=?,gift_product_id=?,gift_quantity=? WHERE id=?");mysqli_stmt_bind_param($st,'isdsiidi',$cid,$name,$threshold,$unit,$sort,$giftProduct,$giftQty,$id);mysqli_stmt_execute($st);$message='Уровень обновлён.';}}
+if(isset($_GET['delete_loyalty_level'])){$id=(int)$_GET['delete_loyalty_level'];$st=mysqli_prepare($db,"DELETE FROM loyalty_levels WHERE id=?");mysqli_stmt_bind_param($st,'i',$id);mysqli_stmt_execute($st);header('Location: admin.php?tab=loyalty');exit;}
+if(isset($_POST['assign_loyalty_promo'])){$uid=(int)($_POST['promo_user_id']??0);$code=strtoupper(trim($_POST['promo_code']??''));$title=trim($_POST['promo_title']??'');$description=trim($_POST['promo_description']??'');$type=trim($_POST['promo_reward_type']??'gift');$value=trim($_POST['promo_reward_value']??'');$starts=trim($_POST['promo_starts_at']??'');$expires=trim($_POST['promo_expires_at']??'');$starts=$starts!==''?$starts.' 00:00:00':'';$expires=$expires!==''?$expires.' 23:59:59':'';$adminId=(int)($_SESSION['user']['id']??0);if($uid>0&&$code!==''&&$title!==''){$st=mysqli_prepare($db,"INSERT INTO loyalty_promocodes(user_id,code,title,description,reward_type,reward_value,starts_at,expires_at,created_by) VALUES(?,?,?,?,?,?,NULLIF(?,''),NULLIF(?,''),?)");mysqli_stmt_bind_param($st,'isssssssi',$uid,$code,$title,$description,$type,$value,$starts,$expires,$adminId);if(mysqli_stmt_execute($st))$message='Промокод выдан.';else $error='Не удалось выдать промокод: проверьте уникальность кода.';}}
+if(isset($_POST['add_loyalty_purchase'])){$uid=(int)($_POST['purchase_user_id']??0);$cid=(int)($_POST['purchase_category_id']??0);$qty=(float)($_POST['purchase_quantity']??0);$note=trim($_POST['purchase_note']??'');if($uid>0&&$cid>0&&$qty>0){$st=mysqli_prepare($db,"INSERT INTO loyalty_purchases(user_id,category_id,quantity,source,note) VALUES(?,?,?,'admin',?)");mysqli_stmt_bind_param($st,'iids',$uid,$cid,$qty,$note);mysqli_stmt_execute($st);$message='Объём покупки добавлен в прогресс.';}}
 
 // ==================== CRUD: ТОВАРЫ ====================
 if (isset($_POST['save_product'])) {
@@ -737,6 +770,7 @@ $hide_pwa_install = get_setting('hide_pwa_install', '0') === '1';
 				<li><a href="?tab=attributes" class="admin-nav-item <?= $active_tab === 'attributes' ? 'active' : '' ?>"><i class="fa-solid fa-tags"></i> Атрибуты</a></li>
                 <li><a href="?tab=combos" class="admin-nav-item <?= $active_tab === 'combos' ? 'active' : '' ?>"><i class="fa-solid fa-fire"></i> Комбо-наборы</a></li>
                 <li><a href="?tab=shops" class="admin-nav-item <?= $active_tab === 'shops' ? 'active' : '' ?>"><i class="fa-solid fa-shop"></i> Магазины (7 точек)</a></li>
+                <li><a href="?tab=loyalty" class="admin-nav-item <?= $active_tab === 'loyalty' ? 'active' : '' ?>"><i class="fa-solid fa-award"></i> Программа лояльности</a></li>
                 <li><a href="?tab=users" class="admin-nav-item <?= $active_tab === 'users' ? 'active' : '' ?>"><i class="fa-solid fa-users"></i> Пользователи</a></li>
 				<li><a href="?tab=visits" class="admin-nav-item <?= $active_tab === 'visits' ? 'active' : '' ?>">
 					<i class="fa-solid fa-chart-line"></i> Посещения
@@ -1028,7 +1062,71 @@ $hide_pwa_install = get_setting('hide_pwa_install', '0') === '1';
 				</script>
 			<?php endif; ?>
 
-			<?php if ($active_tab === 'users'): ?>
+			
+            <?php if ($active_tab === 'loyalty'):
+                $loyalty_users=mysqli_query($db,"SELECT u.id,u.login,lc.card_code,lc.discount_percent FROM users u LEFT JOIN loyalty_cards lc ON lc.user_id=u.id ORDER BY u.id");
+                $loyalty_cats=get_categories();
+                $levelRows=mysqli_query($db,"SELECT ll.*,c.name category_name,p.name gift_product_name,p.id gift_product_joined_id FROM loyalty_levels ll LEFT JOIN categories c ON c.id=ll.category_id LEFT JOIN products p ON p.id=ll.gift_product_id ORDER BY c.sort_order,ll.category_id,ll.threshold");
+                $giftProducts=[];$giftProductResult=mysqli_query($db,"SELECT id,name,volume,category_id FROM products ORDER BY name");
+                if($giftProductResult)while($gp=mysqli_fetch_assoc($giftProductResult)){$gp['image']='';foreach(['webp','jpg','jpeg','png'] as $ext){$img='images/image-'.(int)$gp['id'].'.'.$ext;if(file_exists(__DIR__.'/'.$img)){$gp['image']=$img;break;}}if($gp['image']==='')$gp['image']=get_no_photo_url(null);$giftProducts[]=$gp;}
+            ?>
+            <h3 style="margin-bottom:18px;">Программа лояльности</h3>
+            <div class="data-table-wrapper" style="padding:18px;margin-bottom:20px;">
+                <h4>Дисконтные карты</h4>
+                <form method="POST" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+                    <div class="form-group"><label class="form-label">Пользователь</label><select class="form-control" name="loyalty_user_id" required><?php if($loyalty_users){mysqli_data_seek($loyalty_users,0);while($lu=mysqli_fetch_assoc($loyalty_users)): ?><option value="<?= (int)$lu['id'] ?>"><?= htmlspecialchars($lu['login']) ?> (#<?= (int)$lu['id'] ?>)</option><?php endwhile;} ?></select></div>
+                    <div class="form-group"><label class="form-label">Скидка, %</label><input class="form-control" type="number" min="0" max="100" step="0.01" name="discount_percent" value="1" required></div>
+                    <button class="btn btn-primary" name="save_loyalty_discount">Сохранить скидку</button>
+                </form>
+                <div style="overflow:auto;margin-top:12px;"><table class="data-table"><thead><tr><th>Пользователь</th><th>Карта</th><th>Скидка</th></tr></thead><tbody><?php if($loyalty_users){mysqli_data_seek($loyalty_users,0);while($lu=mysqli_fetch_assoc($loyalty_users)): ?><tr><td><?= htmlspecialchars($lu['login']) ?> (#<?= (int)$lu['id'] ?>)</td><td><?= htmlspecialchars($lu['card_code']??'создастся при входе') ?></td><td><?= number_format((float)($lu['discount_percent']??1),2,',',' ') ?>%</td></tr><?php endwhile;} ?></tbody></table></div>
+            </div>
+            <div class="data-table-wrapper" style="padding:18px;margin-bottom:20px;">
+                <h4>Прокачка любимого напитка</h4>
+                <p style="color:var(--text-secondary);font-size:.85rem;">Начальная скидка — 1%. Здесь можно вручную начислять дополнительные проценты за задания, розыгрыши и игры. Скидка применяется только к выбранному любимому напитку.</p>
+                <form method="POST" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+                    <div class="form-group"><label class="form-label">Пользователь</label><select class="form-control" name="favorite_reward_user_id" required><?php if($loyalty_users){mysqli_data_seek($loyalty_users,0);while($lu=mysqli_fetch_assoc($loyalty_users)): ?><option value="<?= (int)$lu['id'] ?>"><?= htmlspecialchars($lu['login']) ?> (#<?= (int)$lu['id'] ?>)</option><?php endwhile;} ?></select></div>
+                    <div class="form-group"><label class="form-label">Добавить скидку, %</label><input class="form-control" type="number" min="0.01" max="50" step="0.01" name="favorite_reward_percent" value="1" required></div>
+                    <div class="form-group"><label class="form-label">Основание награды</label><input class="form-control" name="favorite_reward_reason" placeholder="Выполнил задание / выиграл игру"></div>
+                    <button class="btn btn-primary" name="award_favorite_drink"><i class="fa-solid fa-arrow-up"></i> Начислить награду</button>
+                </form>
+            </div>
+            <div class="data-table-wrapper" style="padding:18px;margin-bottom:20px;">
+                <h4>Уровни покупок по категориям</h4><p style="color:var(--text-secondary);font-size:.85rem;">Порог задаётся в единицах категории: литры, килограммы или штуки.</p>
+                <form method="POST" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+                    <div class="form-group"><label class="form-label">Категория</label><select class="form-control" name="level_category_id" required><?php foreach($loyalty_cats as $lc): ?><option value="<?= (int)$lc['id'] ?>"><?= htmlspecialchars($lc['name']) ?></option><?php endforeach; ?></select></div>
+                    <div class="form-group"><label class="form-label">Название уровня</label><input class="form-control" name="level_name" placeholder="Серебро" required></div>
+                    <div class="form-group"><label class="form-label">Порог количества</label><input class="form-control" type="number" min="0.001" step="0.001" name="level_threshold" placeholder="10" required></div><div class="form-group"><label class="form-label">Единица</label><input class="form-control" name="level_unit" value="л" maxlength="20" required></div>
+                    <div class="form-group"><label class="form-label">Порядок</label><input class="form-control" type="number" name="level_sort" value="0"></div><div class="form-group" style="min-width:260px;flex:1"><label class="form-label">Товар-подарок</label><div class="gift-product-picker"><input type="hidden" name="level_gift_product_id" value="0"><button type="button" class="gift-product-current form-control"><span>Без подарка</span><i class="fa-solid fa-chevron-down"></i></button><div class="gift-product-menu"><button type="button" class="gift-product-option" data-id="0" data-name="Без подарка"><span>Без подарка</span></button><?php foreach($giftProducts as $gp): ?><button type="button" class="gift-product-option" data-id="<?= (int)$gp['id'] ?>" data-name="<?= htmlspecialchars($gp['name'],ENT_QUOTES) ?>"><img src="<?= htmlspecialchars($gp['image']) ?>" alt=""><span><?= htmlspecialchars($gp['name']) ?><?= !empty($gp['volume'])?' · '.htmlspecialchars($gp['volume']):'' ?></span></button><?php endforeach; ?></div></div></div><div class="form-group"><label class="form-label">Количество подарка</label><input class="form-control" type="number" min="0.001" step="0.001" name="level_gift_quantity" value="1" style="width:100px"></div>
+                    <button class="btn btn-primary" name="save_loyalty_level">Добавить уровень</button>
+                </form>
+                <div style="overflow:auto;margin-top:12px;"><table class="data-table"><thead><tr><th>Категория</th><th>Уровень</th><th>Порог</th><th></th></tr></thead><tbody><?php if($levelRows):while($lv=mysqli_fetch_assoc($levelRows)): ?><tr><td colspan="4"><form method="POST" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><input type="hidden" name="level_id" value="<?= (int)$lv['id'] ?>"><select class="form-control" name="level_category_id" style="max-width:160px"><?php foreach($loyalty_cats as $lc): ?><option value="<?= (int)$lc['id'] ?>" <?= (int)$lc['id']===(int)$lv['category_id']?'selected':'' ?>><?= htmlspecialchars($lc['name']) ?></option><?php endforeach; ?></select><input class="form-control" name="level_name" value="<?= htmlspecialchars($lv['level_name']) ?>" style="max-width:140px"><input class="form-control" type="number" min="0.001" step="0.001" name="level_threshold" value="<?= htmlspecialchars($lv['threshold']) ?>" style="max-width:100px"><input class="form-control" name="level_unit" value="<?= htmlspecialchars($lv['unit_label']??'л') ?>" style="max-width:60px"><input type="hidden" name="level_sort" value="<?= (int)$lv['sort_order'] ?>"><div class="gift-product-picker"><input type="hidden" name="level_gift_product_id" value="<?= (int)($lv['gift_product_id']??0) ?>"><button type="button" class="gift-product-current form-control"><?php $currentGiftImage=''; foreach($giftProducts as $gp)if((int)$gp['id']===(int)($lv['gift_product_id']??0)){$currentGiftImage=$gp['image'];break;} if($currentGiftImage!==''): ?><img src="<?= htmlspecialchars($currentGiftImage) ?>" alt="" style="width:32px;height:32px;object-fit:cover;border-radius:5px"><?php endif; ?><span><?php if(!empty($lv['gift_product_joined_id'])): ?><?= htmlspecialchars($lv['gift_product_name']) ?><?php else: ?>Без подарка<?php endif; ?></span><i class="fa-solid fa-chevron-down"></i></button><div class="gift-product-menu"><button type="button" class="gift-product-option" data-id="0" data-name="Без подарка"><span>Без подарка</span></button><?php foreach($giftProducts as $gp): ?><button type="button" class="gift-product-option" data-id="<?= (int)$gp['id'] ?>" data-name="<?= htmlspecialchars($gp['name'],ENT_QUOTES) ?>"><img src="<?= htmlspecialchars($gp['image']) ?>" alt=""><span><?= htmlspecialchars($gp['name']) ?><?= !empty($gp['volume'])?' · '.htmlspecialchars($gp['volume']):'' ?></span></button><?php endforeach; ?></div></div><input class="form-control" type="number" min="0.001" step="0.001" name="level_gift_quantity" value="<?= htmlspecialchars((string)($lv['gift_quantity']??1)) ?>" style="width:82px"><button class="btn btn-primary btn-sm" name="update_loyalty_level">Сохранить</button><a class="btn btn-danger btn-sm" href="?tab=loyalty&delete_loyalty_level=<?= (int)$lv['id'] ?>" onclick="return confirm('Удалить уровень?')"><i class="fa-solid fa-trash"></i></a></form></td></tr><?php endwhile;endif; ?></tbody></table></div>
+            </div>
+            <div class="data-table-wrapper" style="padding:18px;margin-bottom:20px;">
+                <h4>Выдать персональный промокод</h4>
+                <form method="POST" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+                    <div class="form-group"><label class="form-label">Пользователь</label><select class="form-control" name="promo_user_id" required><?php if($loyalty_users){mysqli_data_seek($loyalty_users,0);while($lu=mysqli_fetch_assoc($loyalty_users)): ?><option value="<?= (int)$lu['id'] ?>"><?= htmlspecialchars($lu['login']) ?> (#<?= (int)$lu['id'] ?>)</option><?php endwhile;} ?></select></div>
+                    <div class="form-group"><label class="form-label">Код</label><input class="form-control" name="promo_code" placeholder="PIV-2026-001" required></div>
+                    <div class="form-group"><label class="form-label">Название</label><input class="form-control" name="promo_title" placeholder="Подарок за покупку" required></div>
+                    <div class="form-group"><label class="form-label">Тип награды</label><select class="form-control" name="promo_reward_type"><option value="gift">Подарок</option><option value="discount">Скидка</option><option value="bonus">Бонус</option><option value="other">Другое</option></select></div>
+                    <div class="form-group"><label class="form-label">Что даёт</label><input class="form-control" name="promo_reward_value" placeholder="Скидка 10%"></div>
+                    <div class="form-group"><label class="form-label">Описание</label><input class="form-control" name="promo_description"></div>
+                    <div class="form-group"><label class="form-label">Начало действия</label><div class="promo-datepick"><input class="form-control promo-date-display" type="text" placeholder="дд.мм.гггг" readonly><input type="hidden" name="promo_starts_at" class="promo-date-value"><button type="button" class="promo-date-toggle"><i class="fa-solid fa-calendar-days"></i></button><div class="promo-calendar"><div class="promo-calendar-head"><button type="button" data-step="-1">‹</button><strong></strong><button type="button" data-step="1">›</button></div><div class="promo-calendar-grid"></div></div></div></div><div class="form-group"><label class="form-label">Действует до</label><div class="promo-datepick"><input class="form-control promo-date-display" type="text" placeholder="дд.мм.гггг" readonly><input type="hidden" name="promo_expires_at" class="promo-date-value"><button type="button" class="promo-date-toggle"><i class="fa-solid fa-calendar-days"></i></button><div class="promo-calendar"><div class="promo-calendar-head"><button type="button" data-step="-1">‹</button><strong></strong><button type="button" data-step="1">›</button></div><div class="promo-calendar-grid"></div></div></div></div>
+                    <button class="btn btn-primary" name="assign_loyalty_promo">Выдать промокод</button>
+                </form>
+            </div>
+            <div class="data-table-wrapper" style="padding:18px;">
+                <h4>Добавить покупку в прогресс</h4><p style="color:var(--text-secondary);font-size:.85rem;">Реальные продажи сайт пока не сохраняет. Сейчас прогресс можно корректировать вручную; позже подключим кассу или 1С.</p>
+                <form method="POST" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+                    <div class="form-group"><label class="form-label">Пользователь</label><select class="form-control" name="purchase_user_id" required><?php if($loyalty_users){mysqli_data_seek($loyalty_users,0);while($lu=mysqli_fetch_assoc($loyalty_users)): ?><option value="<?= (int)$lu['id'] ?>"><?= htmlspecialchars($lu['login']) ?> (#<?= (int)$lu['id'] ?>)</option><?php endwhile;} ?></select></div>
+                    <div class="form-group"><label class="form-label">Категория</label><select class="form-control" name="purchase_category_id" required><?php foreach($loyalty_cats as $lc): ?><option value="<?= (int)$lc['id'] ?>"><?= htmlspecialchars($lc['name']) ?></option><?php endforeach; ?></select></div>
+                    <div class="form-group"><label class="form-label">Количество</label><input class="form-control" type="number" min="0.001" step="0.001" name="purchase_quantity" required></div>
+                    <div class="form-group"><label class="form-label">Комментарий</label><input class="form-control" name="purchase_note"></div>
+                    <button class="btn btn-primary" name="add_loyalty_purchase">Добавить покупку</button>
+                </form>
+            </div>
+            <?php endif; ?>
+
+<?php if ($active_tab === 'users'): ?>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h3>Пользователи системы (<?= count($users) ?>)</h3>
                     <button class="btn btn-primary" onclick="openUserModal()"><i class="fa-solid fa-plus"></i> Добавить пользователя</button>
@@ -1618,5 +1716,49 @@ $hide_pwa_install = get_setting('hide_pwa_install', '0') === '1';
 			setTimeout(() => msg.remove(), 2000);
 		}
     </script>
+<style>.promo-datepick{position:relative;display:flex;align-items:center;min-width:190px}.promo-datepick .promo-date-display{padding-right:42px;cursor:pointer}.promo-date-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--gold-light,#fbbf24);font-size:1.05rem;cursor:pointer}.promo-calendar{display:none;position:absolute;top:calc(100% + 7px);left:0;z-index:9999;width:280px;padding:12px;border-radius:13px;background:#1b2230;border:1px solid rgba(245,158,11,.35);box-shadow:0 12px 35px rgba(0,0,0,.45)}.promo-datepick.open .promo-calendar{display:block}.promo-calendar-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.promo-calendar-head button{width:30px;height:30px;border:0;border-radius:7px;background:rgba(255,255,255,.08);color:#fff;cursor:pointer}.promo-calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.promo-calendar-grid span,.promo-calendar-grid button{height:30px;display:flex;align-items:center;justify-content:center;border:0;border-radius:7px;font:inherit;font-size:.82rem}.promo-calendar-grid span{color:#9ca3af}.promo-calendar-grid button{background:rgba(255,255,255,.05);color:#fff;cursor:pointer}.promo-calendar-grid button:hover,.promo-calendar-grid button.selected{background:#d97706;color:#fff}</style><script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.promo-datepick').forEach(function(wrap){var display=wrap.querySelector('.promo-date-display'),hidden=wrap.querySelector('.promo-date-value'),grid=wrap.querySelector('.promo-calendar-grid'),title=wrap.querySelector('.promo-calendar-head strong'),selected=null,view=new Date();view.setDate(1);var months=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];function pad(n){return String(n).padStart(2,'0')}function val(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}function render(){title.textContent=months[view.getMonth()]+' '+view.getFullYear();grid.innerHTML='';['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(function(x){var s=document.createElement('span');s.textContent=x;grid.appendChild(s)});var off=(new Date(view.getFullYear(),view.getMonth(),1).getDay()+6)%7;for(var i=0;i<off;i++)grid.appendChild(document.createElement('span'));var n=new Date(view.getFullYear(),view.getMonth()+1,0).getDate();for(var d=1;d<=n;d++){var date=new Date(view.getFullYear(),view.getMonth(),d),b=document.createElement('button');b.type='button';b.textContent=d;if(selected&&val(date)===val(selected))b.classList.add('selected');b.addEventListener('click',function(date){return function(){selected=date;hidden.value=val(date);display.value=pad(date.getDate())+'.'+pad(date.getMonth()+1)+'.'+date.getFullYear();wrap.classList.remove('open')}}(date));grid.appendChild(b)}}function toggle(){wrap.classList.toggle('open');if(wrap.classList.contains('open'))render()}display.addEventListener('click',toggle);wrap.querySelector('.promo-date-toggle').addEventListener('click',toggle);wrap.querySelectorAll('[data-step]').forEach(function(b){b.addEventListener('click',function(){view.setMonth(view.getMonth()+Number(b.dataset.step));render()})});document.addEventListener('click',function(e){if(!wrap.contains(e.target)&&!wrap.querySelector('.promo-calendar').contains(e.target))wrap.classList.remove('open')})})});</script>
+<style>
+.gift-product-picker{position:relative;min-width:230px}.gift-product-current{display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;min-height:42px;cursor:pointer}.gift-product-menu{display:none;position:absolute;z-index:10020;top:calc(100% + 4px);left:0;width:min(360px,85vw);max-height:310px;overflow:auto;background:#202938;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:6px;box-shadow:0 12px 28px rgba(0,0,0,.4)}.gift-product-picker.open .gift-product-menu{display:block}.gift-product-option{display:flex;align-items:center;gap:10px;width:100%;padding:7px;border:0;border-radius:7px;background:transparent;color:#fff;text-align:left;cursor:pointer}.gift-product-option:hover{background:rgba(255,255,255,.1)}.gift-product-option img{width:44px;height:44px;object-fit:cover;border-radius:6px;background:#111;flex:none}
+</style>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+ document.querySelectorAll('.gift-product-picker').forEach(function(picker){
+  var hidden=picker.querySelector('input[type=hidden]'),current=picker.querySelector('.gift-product-current'),label=current.querySelector('span');
+  current.addEventListener('click',function(){picker.classList.toggle('open')});
+  picker.querySelectorAll('.gift-product-option').forEach(function(option){option.addEventListener('click',function(){hidden.value=option.dataset.id;label.textContent=option.dataset.name;var img=option.querySelector('img');var old=current.querySelector('img');if(old)old.remove();if(img){var clone=img.cloneNode();clone.style.cssText='width:32px;height:32px;object-fit:cover;border-radius:5px';current.insertBefore(clone,label)}picker.classList.remove('open')})});
+  document.addEventListener('click',function(e){if(!picker.contains(e.target))picker.classList.remove('open')});
+ });
+});
+</script>
+
+<style>
+.dropdown-portal-panel{position:fixed!important;z-index:2147483000!important;max-height:min(340px,calc(100vh - 24px))!important;overflow-y:auto!important;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#b7791f #171d29}
+.dropdown-portal-panel::-webkit-scrollbar{width:8px}
+.dropdown-portal-panel::-webkit-scrollbar-track{background:#171d29;border-radius:10px}
+.dropdown-portal-panel::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#fbbf24,#92400e);border:2px solid #171d29;border-radius:10px}
+.dropdown-portal-panel::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#fcd34d,#b45309)}
+</style>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+ const records=[];
+ function setup(owner,trigger,panel,kind){
+  if(!owner||!trigger||!panel)return;
+  const placeholder=document.createComment('dropdown-position');panel.parentNode.insertBefore(placeholder,panel);panel.classList.add('dropdown-portal-panel');panel.style.display='none';document.body.appendChild(panel);
+  const rec={owner,trigger,panel,kind,open:false};records.push(rec);
+  rec.place=function(){const r=trigger.getBoundingClientRect(),vw=document.documentElement.clientWidth,vh=document.documentElement.clientHeight,w=Math.min(Math.max(r.width,kind==='calendar'?280:260),vw-20),left=Math.max(10,Math.min(r.left,vw-w)),below=vh-r.bottom-10,above=r.top-10,h=Math.max(150,Math.min(340,Math.max(below,above))),up=below<Math.min(220,above);panel.style.width=w+'px';panel.style.left=left+'px';panel.style.maxHeight=h+'px';panel.style.top=(up?Math.max(10,r.top-h-7):r.bottom+6)+'px';};
+  rec.close=function(){rec.open=false;panel.style.display='none';owner.classList.remove('open')};
+  rec.show=function(){records.forEach(x=>{if(x!==rec)x.close()});rec.open=true;owner.classList.add('open');panel.style.display='block';rec.place()};
+  if(kind==='gift'){trigger.addEventListener('click',function(e){e.preventDefault();e.stopImmediatePropagation();e.stopPropagation();rec.open?rec.close():rec.show()},{capture:true});}else{const observer=new MutationObserver(()=>{if(owner.classList.contains('open')){rec.open=true;panel.style.display='block';rec.place()}else if(rec.open)rec.close()});observer.observe(owner,{attributes:true,attributeFilter:['class']});}
+  if(kind==='gift')panel.addEventListener('click',function(e){const opt=e.target.closest('.gift-product-option');if(!opt)return;const hidden=owner.querySelector('input[type=hidden]'),label=trigger.querySelector('span'),img=opt.querySelector('img'),old=trigger.querySelector('img');if(hidden)hidden.value=opt.dataset.id;if(label)label.textContent=opt.dataset.name;if(old)old.remove();if(img){const clone=img.cloneNode();clone.style.cssText='width:32px;height:32px;object-fit:cover;border-radius:5px';trigger.insertBefore(clone,label)}rec.close()});
+  if(kind==='calendar')panel.addEventListener('click',function(e){if(e.target.closest('.promo-calendar-grid button'))rec.close()});
+ }
+ document.querySelectorAll('.gift-product-picker').forEach(p=>setup(p,p.querySelector('.gift-product-current'),p.querySelector('.gift-product-menu'),'gift'));
+ document.querySelectorAll('.promo-datepick').forEach(p=>setup(p,p.querySelector('.promo-date-display'),p.querySelector('.promo-calendar'),'calendar'));
+ document.addEventListener('click',e=>records.forEach(r=>{if(r.open&&!r.panel.contains(e.target)&&!r.trigger.contains(e.target))r.close()}));
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')records.forEach(r=>r.close())});
+ window.addEventListener('resize',()=>records.forEach(r=>{if(r.open)r.place()}));
+ window.addEventListener('scroll',()=>records.forEach(r=>{if(r.open)r.place()}),true);
+});
+</script>
 </body>
 </html>
