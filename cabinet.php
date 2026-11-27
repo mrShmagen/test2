@@ -97,15 +97,14 @@ try {
     if (isset($_POST['link_1c_card'])) {
         $active_tab='loyalty';
         $csrf=$_POST['loyalty_csrf']??'';
-        $barcode=$_POST['card_barcode']??'';
         $code=$_POST['link_code']??'';
-        if (!is_string($csrf)||!hash_equals($_SESSION['loyalty_csrf'],$csrf)||!is_string($barcode)||!is_string($code)) {
+        if (!is_string($csrf)||!hash_equals($_SESSION['loyalty_csrf'],$csrf)||!is_string($code)) {
             $error='Некорректный запрос. Обновите страницу.';
-        } elseif (loyalty1c_link($user_id,trim($barcode),trim($code))) {
+        } elseif (loyalty1c_link($user_id,trim($code))) {
             $_SESSION['loyalty_link_success']=true;
             header('Location: cabinet.php?tab=loyalty');exit;
         } else {
-            $error='Не удалось привязать карту. Проверьте номер штрихкода и код или попробуйте позднее.';
+            $error='Не удалось привязать карту. Проверьте код или попробуйте позднее.';
         }
     }
     $real_card=loyalty1c_card($user_id);
@@ -811,7 +810,6 @@ $initial = mb_strtoupper(mb_substr($display_name !== '' ? $display_name : 'U', 0
                         <p style="margin:18px 0">Предъявите карту кассиру и получите одноразовый код привязки.</p>
                         <form method="POST" action="cabinet.php?tab=loyalty">
                             <input type="hidden" name="loyalty_csrf" value="<?= htmlspecialchars($_SESSION['loyalty_csrf'],ENT_QUOTES) ?>">
-                            <div class="form-group"><label class="form-label" for="card_barcode">Номер штрихкода карты</label><input class="form-control" id="card_barcode" name="card_barcode" maxlength="100" required autocomplete="off"></div>
                             <div class="form-group"><label class="form-label" for="link_code">Код от кассира</label><input class="form-control" id="link_code" name="link_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code"></div>
                             <button class="btn btn-primary" type="submit" name="link_1c_card">Привязать карту</button>
                         </form>
