@@ -89,20 +89,34 @@ if ($fdTable && mysqli_num_rows($fdTable) > 0) {
     }
 }
 
-$cardQ = mysqli_prepare($db, "SELECT card_code, discount_percent FROM loyalty_cards WHERE user_id = ?");
-mysqli_stmt_bind_param($cardQ, 'i', $user_id);
-mysqli_stmt_execute($cardQ);
-$loyalty_card = mysqli_fetch_assoc(mysqli_stmt_get_result($cardQ));
-if (!$loyalty_card) {
-    $newCard = 'PV' . strtoupper(bin2hex(random_bytes(8)));
-    $defaultDiscount = 1.00;
-    $insCard = mysqli_prepare($db, "INSERT IGNORE INTO loyalty_cards (user_id, card_code, discount_percent) VALUES (?, ?, ?)");
-    mysqli_stmt_bind_param($insCard, 'isd', $user_id, $newCard, $defaultDiscount);
-    mysqli_stmt_execute($insCard);
-    $cardQ = mysqli_prepare($db, "SELECT card_code, discount_percent FROM loyalty_cards WHERE user_id = ?");
-    mysqli_stmt_bind_param($cardQ, 'i', $user_id);
-    mysqli_stmt_execute($cardQ);
-    $loyalty_card = mysqli_fetch_assoc(mysqli_stmt_get_result($cardQ));
+require_once __DIR__.'/loyalty_1c.php';
+$real_card = null;
+$loyalty_unavailable = false;
+if (empty($_SESSION['loyalty_csrf'])) $_SESSION['loyalty_csrf'] = bin2hex(random_bytes(32));
+try {
+    if (isset($_POST['link_1c_card'])) {
+        $active_tab='loyalty';
+        $csrf=$_POST['loyalty_csrf']??'';
+        $barcode=$_POST['card_barcode']??'';
+        $code=$_POST['link_code']??'';
+        if (!is_string($csrf)||!hash_equals($_SESSION['loyalty_csrf'],$csrf)||!is_string($barcode)||!is_string($code)) {
+            $error='Некорректный запрос. Обновите страницу.';
+        } elseif (loyalty1c_link($user_id,trim($barcode),trim($code))) {
+            $_SESSION['loyalty_link_success']=true;
+            header('Location: cabinet.php?tab=loyalty');exit;
+        } else {
+            $error='Не удалось привязать карту. Проверьте номер штрихкода и код или попробуйте позднее.';
+        }
+    }
+    $real_card=loyalty1c_card($user_id);
+    if (!empty($_SESSION['loyalty_link_success'])) {
+        unset($_SESSION['loyalty_link_success']);
+        $message='Дисконтная карта успешно привязана.';
+    }
+} catch (Throwable $e) {
+    $loyalty_unavailable=true;
+    if (isset($_POST['link_1c_card'])) $error='Сервис карт временно недоступен. Попробуйте позднее.';
+    error_log('Cabinet loyalty service unavailable: '.get_class($e));
 }
 $loyalty_categories = [];
 $lcRes = mysqli_query($db, "SELECT c.id,c.name,COALESCE(SUM(lp.quantity),0) purchased FROM categories c LEFT JOIN loyalty_purchases lp ON lp.category_id=c.id AND lp.user_id=" . (int)$user_id . " WHERE COALESCE(c.is_visible,1)=1 GROUP BY c.id,c.name ORDER BY c.sort_order,c.id");
@@ -730,6 +744,15 @@ $initial = mb_strtoupper(mb_substr($display_name !== '' ? $display_name : 'U', 0
                     <p>Расскажите о себе — так мы сможем поздравлять вас с днём рождения и подбирать интересные сорта</p>
                 </div>
 
+                <?php if ($real_card && (int)$real_card['is_active']===1): ?>
+                    <div class="loyalty-progress-card">
+                        <strong>Данные владельца карты из 1С</strong>
+                        <?php foreach (['last_name'=>'Фамилия','first_name'=>'Имя','middle_name'=>'Отчество','phone'=>'Телефон','birth_date'=>'Дата рождения'] as $field=>$label): ?>
+                            <div style="margin-top:8px"><?= htmlspecialchars($label) ?>: <?= htmlspecialchars($field==='birth_date' && !empty($real_card[$field]) ? date('d.m.Y',strtotime($real_card[$field])) : ($real_card[$field]??'—')) ?></div>
+                        <?php endforeach; ?>
+                        <p style="margin-top:12px;color:var(--text-secondary)">Эти данные изменяются в 1С.</p>
+                    </div>
+                <?php endif; ?>
                 <form method="POST">
                     <div class="cabinet-form-grid">
                         <div class="form-group">
@@ -773,10 +796,27 @@ $initial = mb_strtoupper(mb_substr($display_name !== '' ? $display_name : 'U', 0
 
             <div class="cabinet-panel <?= $active_tab === 'loyalty' ? 'active' : '' ?>">
                 <div class="cabinet-panel-header"><h2><i class="fa-solid fa-credit-card" style="color:var(--gold-primary);"></i> Моя дисконтная карта</h2><p>Персональная карта, скидка и прогресс покупок</p></div>
-                <div class="loyalty-card">
-                    <div class="loyalty-card-top"><strong>ПИВЛЯНДИЯ</strong><span>DISCOUNT CARD</span></div>
-                    <div class="loyalty-card-bottom"><div><div>Ваша скидка</div><div class="loyalty-discount"><?= number_format((float)$loyalty_card['discount_percent'], 2, ',', ' ') ?>%</div></div><button type="button" class="loyalty-qr loyalty-qr-open" data-qr="<?= htmlspecialchars($loyalty_card['card_code'], ENT_QUOTES) ?>" aria-label="Увеличить QR-код дисконтной карты" title="Нажмите, чтобы увеличить QR-код"></button></div>
-                </div>
+                <?php if ($loyalty_unavailable): ?>
+                    <div class="loyalty-progress-card">Сервис дисконтных карт временно недоступен.</div>
+                <?php elseif ($real_card && (int)$real_card['is_active']===1 && !empty($real_card['barcode'])): ?>
+                    <div class="loyalty-card">
+                        <div class="loyalty-card-top"><strong>ПИВЛЯНДИЯ</strong><span>КАРТА ПРИВЯЗАНА</span></div>
+                        <div class="loyalty-card-bottom"><div><div>Ваш кешбэк</div><div class="loyalty-discount"><?= $real_card['cashback_percent']===null ? '—' : number_format((float)$real_card['cashback_percent'],2,',',' ').'%' ?></div></div><button type="button" class="loyalty-qr loyalty-qr-open" data-qr="<?= htmlspecialchars($real_card['barcode'], ENT_QUOTES) ?>" aria-label="Увеличить QR-код дисконтной карты" title="Нажмите, чтобы увеличить QR-код"></button></div>
+                    </div>
+                <?php elseif ($real_card): ?>
+                    <div class="loyalty-progress-card">Карта временно недоступна. Обратитесь к администратору магазина.</div>
+                <?php else: ?>
+                    <div class="loyalty-card">
+                        <div class="loyalty-card-top"><strong>ПИВЛЯНДИЯ</strong><span>ПРИВЯЗКА КАРТЫ</span></div>
+                        <p style="margin:18px 0">Предъявите карту кассиру и получите одноразовый код привязки.</p>
+                        <form method="POST" action="cabinet.php?tab=loyalty">
+                            <input type="hidden" name="loyalty_csrf" value="<?= htmlspecialchars($_SESSION['loyalty_csrf'],ENT_QUOTES) ?>">
+                            <div class="form-group"><label class="form-label" for="card_barcode">Номер штрихкода карты</label><input class="form-control" id="card_barcode" name="card_barcode" maxlength="100" required autocomplete="off"></div>
+                            <div class="form-group"><label class="form-label" for="link_code">Код от кассира</label><input class="form-control" id="link_code" name="link_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code"></div>
+                            <button class="btn btn-primary" type="submit" name="link_1c_card">Привязать карту</button>
+                        </form>
+                    </div>
+                <?php endif; ?>
                 <div class="loyalty-section-title">Мой любимый напиток</div>
                 <div class="loyalty-progress-card favorite-drink-card">
                     <?php if ($favorite_drink && !empty($favorite_drink['product_id'])): ?>
