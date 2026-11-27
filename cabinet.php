@@ -745,11 +745,9 @@ $initial = mb_strtoupper(mb_substr($display_name !== '' ? $display_name : 'U', 0
 
                 <?php if ($real_card && (int)$real_card['is_active']===1): ?>
                     <div class="loyalty-progress-card">
-                        <strong>Данные владельца карты из 1С</strong>
                         <?php foreach (['last_name'=>'Фамилия','first_name'=>'Имя','middle_name'=>'Отчество','phone'=>'Телефон','birth_date'=>'Дата рождения'] as $field=>$label): ?>
                             <div style="margin-top:8px"><?= htmlspecialchars($label) ?>: <?= htmlspecialchars($field==='birth_date' && !empty($real_card[$field]) ? date('d.m.Y',strtotime($real_card[$field])) : ($real_card[$field]??'—')) ?></div>
                         <?php endforeach; ?>
-                        <p style="margin-top:12px;color:var(--text-secondary)">Эти данные изменяются в 1С.</p>
                     </div>
                 <?php endif; ?>
                 <form method="POST">
